@@ -12,7 +12,7 @@ with open('camera_cal.npz','rb') as f:
     dist = camera_cal['dist']
 
 W, H = 2500, 2280
-trim_w, trim_h = 1500, 1000
+trim_w, trim_h = 1500, 800
 offset = 400
 src = np.array([[594, 450], [684, 450], [1056, 690], [250,690]], np.float32)
 dst = np.array([[offset + 250, 0], [offset + 1056, 0], [offset + 1056, H], [offset + 250, H]], np.float32)
@@ -405,12 +405,14 @@ def pipeline(img):
     result = inv_warp(img, line_img)
 
     return result
-
 def main():
     cap = cv2.VideoCapture(sys.argv[1])
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    #
+    # sudo apt-get install ffmpeg x264 libx264-dev
+    #
+    fourcc = cv2.VideoWriter_fourcc(*'X264')
     #out = cv2.VideoWriter('result_' + sys.argv[1],fourcc, 25.0, (1280,720))
-    out = cv2.VideoWriter('result_' + os.path.splitext(os.path.basename(sys.argv[1]))[0] + ".avi", fourcc, 25.0, (1280,720))
+    out = cv2.VideoWriter('result_' + os.path.splitext(os.path.basename(sys.argv[1]))[0] + ".mp4", fourcc, 25.0, (1280,720))
 
     while(cap.isOpened()):
         ret, frame = cap.read()
@@ -421,6 +423,9 @@ def main():
             new = pipeline(frame)
             out.write(new)
             cv2.imshow('frame', cv2.resize(new, (new.shape[1]//2, new.shape[0]//2)))
+        else:
+            break
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
