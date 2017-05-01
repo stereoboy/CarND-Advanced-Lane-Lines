@@ -5,21 +5,10 @@ import matplotlib.pyplot as plt
 import pickle
 import sys
 
-
-mtx = np.array([[  1.15777829e+03,   0.00000000e+00,   6.67113866e+02],
-    [  0.00000000e+00,   1.15282230e+03,   3.86124658e+02],
-    [  0.00000000e+00,   0.00000000e+00,   1.00000000e+00]])
-
-dist = np.array([[-0.24688572, -0.02372824, -0.00109832,  0.00035104, -0.00260433]])
-
-#M = np.array([[ -6.43512974e-01,  -1.51784431e+00,   1.04731257e+03],
-#    [ -3.99680289e-15,  -3.43206919e+00,  1.54443114e+03],
-#    [ -2.38524478e-18,  -2.38190286e-03,   1.00000000e+00]])
-#
-#Minv = np.array([[  1.11662531e-01,  -4.42253412e-01,   5.66084367e+02],
-#    [  2.22044605e-16,  -2.91369417e-01,   4.50000000e+02],
-#    [ -2.16840434e-18,  -6.94013648e-04,   1.00000000e+00]])
-
+with open('camera_cal.npz','rb') as f:
+    camera_cal = np.load(f)
+    mtx = camera_cal['mtx']
+    dist = camera_cal['dist']
 
 W, H = 2500, 2280
 trim_w, trim_h = 1500, 1000
@@ -76,7 +65,7 @@ def dir_threshold(img, sobel_kernel=3, thresh=(0, np.pi/2)):
     # Calculate the x and y gradients
     sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel)
     sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=sobel_kernel)
-    # Take the absolute value of the gradient direction, 
+    # Take the absolute value of the gradient direction,
     # apply a threshold, and create a binary image result
     absgraddir = np.arctan2(np.absolute(sobely), np.absolute(sobelx))
     binary_output =  np.zeros_like(absgraddir)
@@ -89,26 +78,84 @@ def dir_threshold(img, sobel_kernel=3, thresh=(0, np.pi/2)):
 def hls_select(img, thresh=(0, 255)):
 
     hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+    l_channel = hls[:,:,1]
     s_channel = hls[:,:,2]
     binary_output = np.zeros_like(s_channel)
-    binary_output[(s_channel > thresh[0]) & (s_channel <= thresh[1])] = 1
+    binary_output[(s_channel > thresh[0]) & (s_channel <= thresh[1]) & (l_channel >= 100)] = 1
     return binary_output
 
 def combined_threshold(image):
-    ksize = 3
     # Apply each of the thresholding functions
-    gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=ksize, thresh=(20, 100))
-    grady = abs_sobel_thresh(image, orient='y', sobel_kernel=ksize, thresh=(20, 100))
-    mag_binary = mag_thresh(image, sobel_kernel=ksize, mag_thresh=(30, 100))
-    dir_binary = dir_threshold(image, sobel_kernel=ksize, thresh=(0.7, 1.3))
+    gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=3, thresh=(20, 100))
+    grady = abs_sobel_thresh(image, orient='y', sobel_kernel=3, thresh=(20, 100))
+    mag_binary = mag_thresh(image, sobel_kernel=3, mag_thresh=(30, 100))
+    dir_binary = dir_threshold(image, sobel_kernel=11, thresh=(0.7, 1.3))
 
-    hls_binary = hls_select(image, thresh=(170, 255))
+    hls_binary = hls_select(image, thresh=(90, 255))
 
     combined = np.zeros_like(dir_binary)
     combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1)) | (hls_binary == 1)] = 1
 
     return combined
+def hls_select2(img, thresh=(0, 255)):
+    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+    s_channel = hls[:,:,2]
+    l_channel = hls[:,:,1]
+    kernel = np.ones((11,11),np.uint8)
 
+    binary_output = np.zeros_like(s_channel)
+    binary_output[(s_channel > thresh[0]) & (s_channel <= thresh[1]) | (l_channel >= 200)] = 1
+    binary_output = cv2.dilate(binary_output,kernel,iterations = 1)
+    return binary_output
+
+def combined_threshold2(image):
+    # Apply each of the thresholding functions
+    gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=5, thresh=(20, 100))
+    grady = abs_sobel_thresh(image, orient='y', sobel_kernel=5, thresh=(20, 100))
+    mag_binary = mag_thresh(image, sobel_kernel=5, mag_thresh=(30, 100))
+    dir_binary = dir_threshold(image, sobel_kernel=15, thresh=(0.7, 1.3))
+
+    hls_binary = hls_select2(image, thresh=(100, 255))
+
+    combined = np.zeros_like(dir_binary)
+
+    gradxy = np.zeros_like(dir_binary)
+    gradxy[(gradx == 1) & (grady == 1) ] = 1
+
+    gradient = np.zeros_like(dir_binary)
+    gradient[ ((mag_binary == 1) & (dir_binary == 1)) ] = 1
+
+    color_binary = np.dstack((gradxy, gradient, hls_binary))
+
+    combined[(hls_binary == 1)&(((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))) ] = 1
+    #combined[(hls_binary == 1)&((mag_binary == 1) & (dir_binary == 1)) ] = 1
+
+    color_binary = 255*color_binary.astype(np.uint8)
+
+    #combined = hls_binary
+    return combined
+
+#def hls_select2(img, thresh=(0, 255)):
+#    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+#    s_channel = hls[:,:,2]
+#    l_channel = hls[:,:,1]
+#    binary_output = np.zeros_like(s_channel)
+#    binary_output[(s_channel > thresh[0]) & (s_channel <= thresh[1]) & (l_channel >= 100)] = 1
+#    return binary_output
+#
+#def combined_threshold2(image):
+#    # Apply each of the thresholding functions
+#    gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=5, thresh=(20, 100))
+#    grady = abs_sobel_thresh(image, orient='y', sobel_kernel=5, thresh=(20, 100))
+#    mag_binary = mag_thresh(image, sobel_kernel=5, mag_thresh=(30, 100))
+#    dir_binary = dir_threshold(image, sobel_kernel=15, thresh=(0.7, 1.3))
+#
+#    hls_binary = hls_select2(image, thresh=(90, 255))
+#
+#    combined = np.zeros_like(dir_binary)
+#    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1)) | (hls_binary == 1)] = 1
+#
+#    return combined
 
 def unwarp_trim(img):
     warped = cv2.warpPerspective(img, M, (W, H), flags=cv2.INTER_LINEAR)
@@ -134,30 +181,97 @@ def inv_warp(img, line_img):
 
 # Define a class to receive the characteristics of each line detection
 class Line():
-    def __init__(self):
+    def __init__(self, name):
+
+        self.name = name
+        # numbers of interations
+        self.n = 5
         # was the line detected in the last iteration?
-        self.detected = False  
+        self.detected = False
         # x values of the last n fits of the line
-        self.recent_xfitted = [] 
+        self.recent_xfitted = []
+        # the last n fits of the line
+        self.recent_fits = []
         #average x values of the fitted line over the last n iterations
-        self.bestx = None     
+        self.bestx = None
         #polynomial coefficients averaged over the last n iterations
-        self.best_fit = None  
+        self.best_fit = None
         #polynomial coefficients for the most recent fit
-        self.current_fit = [np.array([False])]  
+        self.current_fit = None
         #radius of curvature of the line in some units
-        self.radius_of_curvature = None 
+        self.radius_of_curvature = None
         #distance in meters of vehicle center from the line
-        self.line_base_pos = None 
+        self.line_base_pos = None
         #difference in fit coefficients between last and new fits
-        self.diffs = np.array([0,0,0], dtype='float') 
+        self.diffs = np.array([0,0,0], dtype='float')
         #x values for detected line pixels
-        self.allx = None  
+        self.allx = None
         #y values for detected line pixels
         self.ally = None
+        # threshold for difference
+        self.threshold_fit = 700
+        self.threshold_fitx = 200
+        self.filter = ''
 
+    def check_outlier(self, fit, fitx):
+
+        self.diffs = np.abs(self.current_fit - fit)
+        self.diffx = np.mean(np.abs(self.bestx - fitx))
+        if self.name == self.filter:
+            print(self.name)
+            print(self.diffs, np.linalg.norm(self.diffs))
+            print(self.diffx)
+
+        if np.linalg.norm(self.diffs) > self.threshold_fit:
+            return False
+        if self.diffx > self.threshold_fitx:
+            return False
+
+        return True
+
+    def set(self, fit, fitx):
+        self.detected = True
+        self.current_fit = fit
+        self.recent_fits.append(fit)
+        if len(self.recent_fits) > self.n:
+            self.recent_fits.pop(0)
+        self.best_fit = np.mean(np.vstack(self.recent_fits), axis=0)
+
+        self.recent_xfitted.append(fitx)
+        if len(self.recent_xfitted) > self.n:
+            self.recent_xfitted.pop(0)
+
+        self.bestx = np.mean(np.array(self.recent_xfitted), axis=0)
+
+    def update(self, fit, ploty):
+        y_eval = np.max(ploty)
+        self.radius_of_curvature = ((1 + (2*fit[0]*y_eval + fit[1])**2)**1.5) / np.absolute(2*fit[0])
+        fitx = fit[0]*ploty**2 + fit[1]*ploty + fit[2]
+        if self.current_fit is not None:
+
+            if self.check_outlier(fit, fitx):
+                self.set(fit, fitx)
+            else:
+                if self.name == self.filter:
+                    print("skip this frame")
+                self.detected = False
+                if len(self.recent_fits) > self.n:
+                    self.recent_fits.pop(0)
+        else:
+            self.current_fit = fit
+            self.set(fit, fitx)
+
+        return self.bestx
+
+class Lane():
+    def __init__(self):
         self.left_fit = None
         self.right_fit = None
+        self.MARGIN = 50
+        self.size_threshold = 200
+
+        self.left_line = Line("LEFT")
+        self.right_line = Line("RIGHT")
 
     def find_lane_lines_first(self, binary_warped):
         # Assuming you have created a warped binary image called "binary_warped"
@@ -183,7 +297,7 @@ class Line():
         leftx_current = leftx_base
         rightx_current = rightx_base
         # Set the width of the windows +/- margin
-        margin = 100
+        margin = self.MARGIN
         # Set minimum number of pixels found to recenter window
         minpix = 50
         # Create empty lists to receive left and right lane pixel indices
@@ -200,8 +314,8 @@ class Line():
             win_xright_low = rightx_current - margin
             win_xright_high = rightx_current + margin
             # Draw the windows on the visualization image
-            cv2.rectangle(out_img,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
-            cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
+            cv2.rectangle(out_img,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2)
+            cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2)
             # Identify the nonzero pixels in x and y within the window
             good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
             good_right_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xright_low) & (nonzerox < win_xright_high)).nonzero()[0]
@@ -211,7 +325,7 @@ class Line():
             # If you found > minpix pixels, recenter next window on their mean position
             if len(good_left_inds) > minpix:
                 leftx_current = np.int(np.mean(nonzerox[good_left_inds]))
-            if len(good_right_inds) > minpix:        
+            if len(good_right_inds) > minpix:
                 rightx_current = np.int(np.mean(nonzerox[good_right_inds]))
 
         # Concatenate the arrays of indices
@@ -220,13 +334,17 @@ class Line():
 
         # Extract left and right line pixel positions
         leftx = nonzerox[left_lane_inds]
-        lefty = nonzeroy[left_lane_inds] 
+        lefty = nonzeroy[left_lane_inds]
         rightx = nonzerox[right_lane_inds]
-        righty = nonzeroy[right_lane_inds] 
+        righty = nonzeroy[right_lane_inds]
 
         # Fit a second order polynomial to each
-        left_fit = np.polyfit(lefty, leftx, 2)
-        right_fit = np.polyfit(righty, rightx, 2)
+        left_fit = None
+        right_fit = None
+        if len(leftx) > self.size_threshold and len(lefty) > self.size_threshold:
+            left_fit = np.polyfit(lefty, leftx, 2)
+        if len(rightx) > self.size_threshold and len(righty) > self.size_threshold:
+            right_fit = np.polyfit(righty, rightx, 2)
 
         return left_fit, right_fit
 
@@ -237,7 +355,7 @@ class Line():
         nonzero = binary_warped.nonzero()
         nonzeroy = np.array(nonzero[0])
         nonzerox = np.array(nonzero[1])
-        margin = 100
+        margin = self.MARGIN
         left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin)))
         right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))
 
@@ -247,47 +365,63 @@ class Line():
         rightx = nonzerox[right_lane_inds]
         righty = nonzeroy[right_lane_inds]
         # Fit a second order polynomial to each
-        left_fit = np.polyfit(lefty, leftx, 2)
-        right_fit = np.polyfit(righty, rightx, 2)
+        left_fit = None
+        right_fit = None
+        if len(leftx) > self.size_threshold and len(lefty) > self.size_threshold:
+            left_fit = np.polyfit(lefty, leftx, 2)
+        if len(rightx) > self.size_threshold and len(righty) > self.size_threshold:
+            right_fit = np.polyfit(righty, rightx, 2)
 
         return left_fit, right_fit
 
     def find_lane_lines(self, binary_warped):
         if (self.left_fit is None) and (self.right_fit is None):
-            self.left_fit, self.right_fit = self.find_lane_lines_first(binary_warped)
+            left_fit, right_fit = self.find_lane_lines_first(binary_warped)
+            if left_fit is not None:
+                self.left_fit = left_fit
+            if right_fit is not None:
+                self.right_fit = right_fit
         else:
-            self.left_fit, self.right_fit = self.find_lane_lines_after(binary_warped, self.left_fit, self.right_fit)
-#		self.left_fit, self.right_fit = self.find_lane_lines_first(binary_warped)
+            #left_fit, right_fit = self.find_lane_lines_after(binary_warped, self.left_fit, self.right_fit)
+            left_fit, right_fit = self.find_lane_lines_first(binary_warped)
+            if left_fit is not None:
+                self.left_fit = left_fit
+            if right_fit is not None:
+                self.right_fit = right_fit
 
         h, w = binary_warped.shape[:2]
 
         ploty = np.linspace(0, h-1, num=h) # to cover same y-range as image
 
 
-        left_fitx = self.left_fit[0]*ploty**2 + self.left_fit[1]*ploty + self.left_fit[2]
-        right_fitx = self.right_fit[0]*ploty**2 + self.right_fit[1]*ploty + self.right_fit[2]
+#        left_fitx = self.left_fit[0]*ploty**2 + self.left_fit[1]*ploty + self.left_fit[2]
+#        right_fitx = self.right_fit[0]*ploty**2 + self.right_fit[1]*ploty + self.right_fit[2]
 
+        left_fitx = self.left_line.update(self.left_fit, ploty)
+        right_fitx = self.right_line.update(self.right_fit, ploty)
 
         # Create an image to draw the lines on
         warp_zero = np.zeros_like(binary_warped).astype(np.uint8)
         color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+        if left_fitx is not None and right_fitx is not None:
 
-        # Recast the x and y points into usable format for cv2.fillPoly()
-        pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
-        pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
-        pts = np.hstack((pts_left, pts_right))
+            # Recast the x and y points into usable format for cv2.fillPoly()
+            pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+            pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+            pts = np.hstack((pts_left, pts_right))
 
-        # Draw the lane onto the warped blank image
-        cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
+            # Draw the lane onto the warped blank image
+            cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
 
         return color_warp
 
 line = None
-line = Line()
+line = Lane()
 
 def pipeline(img):
     undistorted = cv2.undistort(img, mtx, dist, None, mtx)
-    combined = combined_threshold(undistorted)
+    #combined = combined_threshold(undistorted)
+    combined = combined_threshold2(undistorted)
     binary_warped = unwarp_trim(combined)
     cv2.imshow('warped', cv2.resize(binary_warped*255, (binary_warped.shape[1]//2, binary_warped.shape[0]//2)))
     line_img = line.find_lane_lines(binary_warped)
@@ -297,18 +431,23 @@ def pipeline(img):
 
 def main():
     cap = cv2.VideoCapture(sys.argv[1])
+    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    #out = cv2.VideoWriter('result_' + sys.argv[1],fourcc, 25.0, (1280,720))
+    out = cv2.VideoWriter('result_', fourcc, 25.0, (1280,720))
 
     while(cap.isOpened()):
         ret, frame = cap.read()
 
         #gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        new = pipeline(frame)
         if ret:
+            new = pipeline(frame)
+            out.write(new)
             cv2.imshow('frame', cv2.resize(new, (new.shape[1]//2, new.shape[0]//2)))
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
+    out.release()
     cap.release()
     cv2.destroyAllWindows()
 
