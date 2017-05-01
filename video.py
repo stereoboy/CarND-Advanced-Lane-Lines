@@ -4,6 +4,7 @@ import glob
 import matplotlib.pyplot as plt
 import pickle
 import sys
+import os
 
 with open('camera_cal.npz','rb') as f:
     camera_cal = np.load(f)
@@ -97,7 +98,8 @@ def combined_threshold(image):
     combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1)) | (hls_binary == 1)] = 1
 
     return combined
-def hls_select2(img, thresh=(0, 255)):
+
+def hls_select_v2(img, thresh=(0, 255)):
     hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
     s_channel = hls[:,:,2]
     l_channel = hls[:,:,1]
@@ -108,54 +110,30 @@ def hls_select2(img, thresh=(0, 255)):
     binary_output = cv2.dilate(binary_output,kernel,iterations = 1)
     return binary_output
 
-def combined_threshold2(image):
+def combined_threshold_v2(image):
     # Apply each of the thresholding functions
     gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=5, thresh=(20, 100))
     grady = abs_sobel_thresh(image, orient='y', sobel_kernel=5, thresh=(20, 100))
     mag_binary = mag_thresh(image, sobel_kernel=5, mag_thresh=(30, 100))
     dir_binary = dir_threshold(image, sobel_kernel=15, thresh=(0.7, 1.3))
 
-    hls_binary = hls_select2(image, thresh=(100, 255))
+    hls_binary = hls_select_v2(image, thresh=(100, 255))
 
     combined = np.zeros_like(dir_binary)
 
-    gradxy = np.zeros_like(dir_binary)
-    gradxy[(gradx == 1) & (grady == 1) ] = 1
-
-    gradient = np.zeros_like(dir_binary)
-    gradient[ ((mag_binary == 1) & (dir_binary == 1)) ] = 1
-
-    color_binary = np.dstack((gradxy, gradient, hls_binary))
+    # visualization
+#    gradxy = np.zeros_like(dir_binary)
+#    gradxy[(gradx == 1) & (grady == 1) ] = 1
+#
+#    gradient = np.zeros_like(dir_binary)
+#    gradient[ ((mag_binary == 1) & (dir_binary == 1)) ] = 1
+#
+#    color_binary = np.dstack((gradxy, gradient, hls_binary))
+#    color_binary = 255*color_binary.astype(np.uint8)
 
     combined[(hls_binary == 1)&(((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))) ] = 1
-    #combined[(hls_binary == 1)&((mag_binary == 1) & (dir_binary == 1)) ] = 1
 
-    color_binary = 255*color_binary.astype(np.uint8)
-
-    #combined = hls_binary
     return combined
-
-#def hls_select2(img, thresh=(0, 255)):
-#    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
-#    s_channel = hls[:,:,2]
-#    l_channel = hls[:,:,1]
-#    binary_output = np.zeros_like(s_channel)
-#    binary_output[(s_channel > thresh[0]) & (s_channel <= thresh[1]) & (l_channel >= 100)] = 1
-#    return binary_output
-#
-#def combined_threshold2(image):
-#    # Apply each of the thresholding functions
-#    gradx = abs_sobel_thresh(image, orient='x', sobel_kernel=5, thresh=(20, 100))
-#    grady = abs_sobel_thresh(image, orient='y', sobel_kernel=5, thresh=(20, 100))
-#    mag_binary = mag_thresh(image, sobel_kernel=5, mag_thresh=(30, 100))
-#    dir_binary = dir_threshold(image, sobel_kernel=15, thresh=(0.7, 1.3))
-#
-#    hls_binary = hls_select2(image, thresh=(90, 255))
-#
-#    combined = np.zeros_like(dir_binary)
-#    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1)) | (hls_binary == 1)] = 1
-#
-#    return combined
 
 def unwarp_trim(img):
     warped = cv2.warpPerspective(img, M, (W, H), flags=cv2.INTER_LINEAR)
@@ -415,25 +393,24 @@ class Lane():
 
         return color_warp
 
-line = None
-line = Lane()
+lane = Lane()
 
 def pipeline(img):
     undistorted = cv2.undistort(img, mtx, dist, None, mtx)
     #combined = combined_threshold(undistorted)
-    combined = combined_threshold2(undistorted)
+    combined = combined_threshold_v2(undistorted)
     binary_warped = unwarp_trim(combined)
     cv2.imshow('warped', cv2.resize(binary_warped*255, (binary_warped.shape[1]//2, binary_warped.shape[0]//2)))
-    line_img = line.find_lane_lines(binary_warped)
+    line_img = lane.find_lane_lines(binary_warped)
     result = inv_warp(img, line_img)
 
     return result
 
 def main():
     cap = cv2.VideoCapture(sys.argv[1])
-    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
     #out = cv2.VideoWriter('result_' + sys.argv[1],fourcc, 25.0, (1280,720))
-    out = cv2.VideoWriter('result_', fourcc, 25.0, (1280,720))
+    out = cv2.VideoWriter('result_' + os.path.splitext(os.path.basename(sys.argv[1]))[0] + ".avi", fourcc, 25.0, (1280,720))
 
     while(cap.isOpened()):
         ret, frame = cap.read()
