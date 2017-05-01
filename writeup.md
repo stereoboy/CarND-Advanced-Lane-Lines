@@ -112,6 +112,11 @@ I implemented this step in lines # through # in my code in `yet_another_file.py`
 
 #### 1. Provide a link to your final video output.  Your pipeline should perform reasonably well on the entire project video (wobbly lines are ok but no catastrophic failures that would cause the car to drive off the road!).
 
+Here's a [link to my video result](./result_project_video.mp4)
+
+---
+#### 2. Apply Chanllenge!!!
+
 I implemented additional code `video.py`. I used `cv2.imshow` or other `cv2` functions for logging, debugging in real-time.
 By analyzing log in real-time, I fine-tune and set parameters for thresholding and low-pass filtering and sliding-window.
 This is described in **Discussion** section.
@@ -146,10 +151,6 @@ def main():
     cv2.destroyAllWindows()
 ```
 
-Here's a [link to my video result](./result_project_video.mp4)
-
----
-#### 2. Apply Chanllenge!!!
 
 Here's a [link to my challenge video result](./result_challenge_video.mp4)
 
