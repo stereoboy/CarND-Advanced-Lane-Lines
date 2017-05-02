@@ -16,6 +16,7 @@ trim_w, trim_h = 1500, 800
 offset = 400
 src = np.array([[594, 450], [684, 450], [1056, 690], [250,690]], np.float32)
 dst = np.array([[offset + 250, 0], [offset + 1056, 0], [offset + 1056, H], [offset + 250, H]], np.float32)
+Center = offset + (250 + 1056)//2
 
 M = cv2.getPerspectiveTransform(src, dst)
 Minv = cv2.getPerspectiveTransform(dst, src)
@@ -157,13 +158,17 @@ def inv_warp(img, line_img):
     result = cv2.addWeighted(img, 1, inv_warped, 0.3, 0)
     return result
 
+# Define conversions in x and y from pixels space to meters
+ym_per_pix = 30.0/720 # meters per pixel in y dimension
+xm_per_pix = 3.7/700 # meters per pixel in x dimension
+
 # Define a class to receive the characteristics of each line detection
 class Line():
     def __init__(self, name):
 
         self.name = name
         # numbers of interations
-        self.n = 5
+        self.n = 10
         # was the line detected in the last iteration?
         self.detected = False
         # x values of the last n fits of the line
@@ -177,7 +182,7 @@ class Line():
         #polynomial coefficients for the most recent fit
         self.current_fit = None
         #radius of curvature of the line in some units
-        self.radius_of_curvature = None
+        self.radius_of_curvature = 0
         #distance in meters of vehicle center from the line
         self.line_base_pos = None
         #difference in fit coefficients between last and new fits
@@ -223,8 +228,13 @@ class Line():
 
     def update(self, fit, ploty):
         y_eval = np.max(ploty)
-        self.radius_of_curvature = ((1 + (2*fit[0]*y_eval + fit[1])**2)**1.5) / np.absolute(2*fit[0])
         fitx = fit[0]*ploty**2 + fit[1]*ploty + fit[2]
+
+        # Fit new polynomials to x,y in world space
+        fit_cr = np.polyfit(ploty*ym_per_pix, fitx*xm_per_pix, 2)
+        # Calculate the new radii of curvature
+        self.radius_of_curvature = ((1 + (2*fit_cr[0]*y_eval*ym_per_pix + fit_cr[1])**2)**1.5) / np.absolute(2*fit_cr[0])
+
         if self.current_fit is not None:
 
             if self.check_outlier(fit, fitx):
@@ -324,7 +334,16 @@ class Lane():
         if len(rightx) > self.size_threshold and len(righty) > self.size_threshold:
             right_fit = np.polyfit(righty, rightx, 2)
 
-        return left_fit, right_fit
+        # Create an image to draw the lines on
+        warp_zero = np.zeros_like(binary_warped).astype(np.uint8)
+        left_warp = np.zeros_like(binary_warped).astype(np.uint8)
+        right_warp = np.zeros_like(binary_warped).astype(np.uint8)
+
+        left_warp[(lefty, leftx)] = 255
+        right_warp[(righty, rightx)] = 255
+        color_warp = np.dstack((right_warp, warp_zero, left_warp))
+
+        return left_fit, right_fit, color_warp
 
     def find_lane_lines_after(self, binary_warped, left_fit, right_fit):
         # Assume you now have a new warped binary image
@@ -350,18 +369,26 @@ class Lane():
         if len(rightx) > self.size_threshold and len(righty) > self.size_threshold:
             right_fit = np.polyfit(righty, rightx, 2)
 
-        return left_fit, right_fit
+        # Create an image to draw the lines on
+        warp_zero = np.zeros_like(binary_warped).astype(np.uint8)
+        left_warp = np.zeros_like(binary_warped).astype(np.uint8)
+        right_warp = np.zeros_like(binary_warped).astype(np.uint8)
+
+        left_warp[(lefty, leftx)] = 255
+        right_warp[(righty, rightx)] = 255
+        color_warp = np.dstack((right_warp, warp_zero, left_warp))
+        return left_fit, right_fit, color_warp
 
     def find_lane_lines(self, binary_warped):
         if (self.left_fit is None) and (self.right_fit is None):
-            left_fit, right_fit = self.find_lane_lines_first(binary_warped)
+            left_fit, right_fit, color_warp = self.find_lane_lines_first(binary_warped)
             if left_fit is not None:
                 self.left_fit = left_fit
             if right_fit is not None:
                 self.right_fit = right_fit
         else:
-            #left_fit, right_fit = self.find_lane_lines_after(binary_warped, self.left_fit, self.right_fit)
-            left_fit, right_fit = self.find_lane_lines_first(binary_warped)
+            #left_fit, right_fit, color_warp = self.find_lane_lines_after(binary_warped, self.left_fit, self.right_fit)
+            left_fit, right_fit, color_warp = self.find_lane_lines_first(binary_warped)
             if left_fit is not None:
                 self.left_fit = left_fit
             if right_fit is not None:
@@ -371,16 +398,14 @@ class Lane():
 
         ploty = np.linspace(0, h-1, num=h) # to cover same y-range as image
 
-
 #        left_fitx = self.left_fit[0]*ploty**2 + self.left_fit[1]*ploty + self.left_fit[2]
 #        right_fitx = self.right_fit[0]*ploty**2 + self.right_fit[1]*ploty + self.right_fit[2]
 
         left_fitx = self.left_line.update(self.left_fit, ploty)
         right_fitx = self.right_line.update(self.right_fit, ploty)
 
-        # Create an image to draw the lines on
-        warp_zero = np.zeros_like(binary_warped).astype(np.uint8)
-        color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+        lane_warp = np.zeros_like(binary_warped).astype(np.uint8)
+
         if left_fitx is not None and right_fitx is not None:
 
             # Recast the x and y points into usable format for cv2.fillPoly()
@@ -389,22 +414,47 @@ class Lane():
             pts = np.hstack((pts_left, pts_right))
 
             # Draw the lane onto the warped blank image
-            cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
+            cv2.fillPoly(lane_warp, np.int_([pts]), (255))
+            color_warp[:,:,1] = lane_warp
 
-        return color_warp
+        avg_fit = self.left_line.best_fit + self.right_line.best_fit
+        #curvature = self.left_line.radius_of_curvature + self.right_line.radius_of_curvature
+        curvature = ((1 + (2*avg_fit[0]*np.max(ploty)*ym_per_pix + avg_fit[1])**2)**1.5) / np.absolute(2*avg_fit[0])
+
+        center = xm_per_pix*(- Center + (left_fitx[-1] + right_fitx[-1])/2)
+
+        cv2.imshow('color_warp', color_warp)
+
+        return color_warp, curvature, center
 
 lane = Lane()
 
+#def pipeline(img):
+#    undistorted = cv2.undistort(img, mtx, dist, None, mtx)
+#    #combined = combined_threshold(undistorted)
+#    combined = combined_threshold_v2(undistorted)
+#    binary_warped = unwarp_trim(combined)
+#    cv2.imshow('warped', cv2.resize(binary_warped*255, (binary_warped.shape[1]//2, binary_warped.shape[0]//2)))
+#    line_img = lane.find_lane_lines(binary_warped)
+#    result = inv_warp(img, line_img)
+#
+#    return result
+
 def pipeline(img):
     undistorted = cv2.undistort(img, mtx, dist, None, mtx)
-    #combined = combined_threshold(undistorted)
     combined = combined_threshold_v2(undistorted)
     binary_warped = unwarp_trim(combined)
-    cv2.imshow('warped', cv2.resize(binary_warped*255, (binary_warped.shape[1]//2, binary_warped.shape[0]//2)))
-    line_img = lane.find_lane_lines(binary_warped)
+    line_img, curvature, center = lane.find_lane_lines(binary_warped)
     result = inv_warp(img, line_img)
 
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    text0 = 'curvature:%.4fm'%(curvature)
+    text1 = 'center:%.4fm'%(center)
+    cv2.putText(result, text0, (10,100), font, 1.5, (255,255,255), 3)
+    cv2.putText(result, text1, (10,200), font, 1.5, (255,255,255), 3)
+
     return result
+
 def main():
     cap = cv2.VideoCapture(sys.argv[1])
     #
